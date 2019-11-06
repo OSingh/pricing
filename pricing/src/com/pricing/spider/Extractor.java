@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -23,17 +24,20 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class Extractor implements Callable<IDomain> {
+public class Extractor implements Runnable {
     private List<String> articles;
     private String[] cssClass = {"a-price-whole", "_1vC4OE _2rQ-NK"};
     private static Map<SourceDomain, String> map = new HashMap();
     private String URI;
     private SourceDomain domain;
-
-    public Extractor(String URI, SourceDomain domain) {
+    private SearchResult result;
+    private CountDownLatch latch;
+    public Extractor(String URI, SourceDomain domain, SearchResult result, CountDownLatch latch) {
     	this.URI = URI;
     	this.domain = domain;
         articles = new ArrayList<>();
+        this.result = result;
+        this.latch = latch;
     }
     
     static {
@@ -43,7 +47,6 @@ public class Extractor implements Callable<IDomain> {
 		}
     }
 
-    //Find all URLs that start with "http://www.mkyong.com/page/" and add them to the HashSet
     private IDomain getPageLinks() {
             try {
             	Document document = Jsoup.connect(URI).get();
@@ -103,17 +106,19 @@ public class Extractor implements Callable<IDomain> {
         //bwc.getArticles();
     	
     	CrawlController Crawler = new CrawlController();
-    	List<Future<IDomain>> future = Crawler.crawlAndGet("redmi note 7 pro neptune blue 64 gb 4 gb ram");	
-    	for(Future<IDomain> futureee : future) {
-    		System.out.println(futureee.get().getProduct());
-    		System.out.println(futureee.get().getPrice());
+    	SearchResult result = Crawler.crawlAndGet("redmi note 7 pro neptune blue 64 gb 4 gb ram");
+    	for(IDomain dom : result.getDomainList()) {
+    		System.out.println(dom.getProduct());
+    		System.out.println(dom.getPrice());
     	}
-
     }
 
 	@Override
-	public IDomain call() {
-		return getPageLinks();
+	public void run() {
+		IDomain domain = getPageLinks();
+		this.result.getDomainList().add(domain);
+		this.result.getTotal().incrementAndGet();
+		this.latch.countDown();
 	}
 }
 
@@ -141,19 +146,21 @@ enum SourceDomain {
 class CrawlController {
 	
 	//Call below method from resource
-	public List<Future<IDomain>> crawlAndGet(String item) {
+	public SearchResult crawlAndGet(String item) throws InterruptedException {
 		CrawlerPool l_pool = new CrawlerPool();
 		List<SourceDomain> sourceDomain = Arrays.asList(SourceDomain.values());
-		List<Future<IDomain>> future = new LinkedList<>();
+    	CountDownLatch latch = new CountDownLatch(sourceDomain.size());
 
+		SearchResult result = new SearchResult();
 		try {
 			for(SourceDomain domain : sourceDomain)
 			{
 				String URI = getURI(domain, item);
-		        Extractor bwc = new Extractor(URI, domain);
-		        future.add(l_pool.execute(bwc));
+		        Extractor bwc = new Extractor(URI, domain, result, latch);
+		        l_pool.execute(bwc);
 			}
-			return future;
+			latch.await();
+			return result;
 		}		
 		finally {
 			l_pool.shutdown();
@@ -175,15 +182,13 @@ class CrawlController {
 
 class CrawlerPool {
 	private static ThreadPoolExecutor service = null;
-    private final AtomicInteger threadNumber = new AtomicInteger(1);
-    private Future<IDomain> future;
 
 	public CrawlerPool() {
 		service = new ThreadPoolExecutor(5, 7, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
 	}
 	
-    public Future<IDomain> execute(Extractor task){
-    	return service.submit(task);
+    public void execute(Extractor task){
+    	service.submit(task);
     }
     
     public void shutdown(){
@@ -272,5 +277,28 @@ class Amazon implements IDomain {
 	}
 	public void setProduce(String produce) {
 		this.product = produce;
+	}
+}
+
+class SearchResult {
+	private AtomicInteger total;
+	private List<IDomain> domainList;
+
+	public SearchResult() {
+		this.total = new AtomicInteger();
+		this.domainList = new LinkedList<>();
+	}
+	
+	public AtomicInteger getTotal() {
+		return total;
+	}
+	public void setTotal(AtomicInteger total) {
+		this.total = total;
+	}
+	public List<IDomain> getDomainList() {
+		return domainList;
+	}
+	public void setDomainList(List<IDomain> domainList) {
+		this.domainList = domainList;
 	}
 }
