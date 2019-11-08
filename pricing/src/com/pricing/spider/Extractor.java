@@ -1,71 +1,80 @@
 package com.pricing.spider;
 
+import org.jsoup.Connection;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
+import org.jsoup.nodes.FormElement;
 import org.jsoup.select.Elements;
-
-import java.io.FileWriter;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-public class Extractor {
-    private HashSet<String> links;
-    private List<String> articles;
-    private String[] cssClass = {"a-price-whole", "_1vC4OE _2rQ-NK"}; 
+public class Extractor implements Runnable {
+	private String searchItem;
+	private SourceDomain domain;
+	private SearchResult result;
+	private CountDownLatch latch;
 
-    public Extractor() {
-        links = new HashSet<>();
-        articles = new ArrayList<>();
-    }
+	public Extractor(SourceDomain domain, String searchItem, SearchResult result, CountDownLatch latch) {
+		this.domain = domain;
+		this.searchItem = searchItem;
+		this.result = result;
+		this.latch = latch;
+	}
+	
+	@Override
+	public void run() {
+		Product product = getPageLinks();
+		this.result.addResult(product);
+		this.latch.countDown();
+	}
 
-    //Find all URLs that start with "http://www.mkyong.com/page/" and add them to the HashSet
-    public void getPageLinks(String URL) {
-        if (!links.contains(URL)) {
-            try { 
+	private Product getPageLinks() {
+		try {
+			Document document = Jsoup.connect(domain.getURL()).get();
 
-                 Document document = Jsoup.connect(URL).get();
-                //Elements body = document.body().select("href");
-                Elements body = document.body().getAllElements();
-               // Element otherLinks = document.body().getElementById("url");
+			FormElement searchForm = document.body().select(domain.getFormName()).forms().get(0);
+			Elements searchText = searchForm.getElementsByAttributeValue("name", domain.getSearchBoxId());
+			searchText.val(this.searchItem);
 
-                for (Element page : body) {
-                    if (links.add(URL)) {
-                    }
-                    //getPageLinks(page.attr("abs:href"));
-                }
-            } catch (IOException e) {
-                System.err.println(e.getMessage());
-            }
-        }
-    }
+			Connection.Response res = searchForm.submit().execute();
+			Element documentBody = res.parse().body();
 
-    //Connect to each link saved in the article and find all the articles in the page
-    public void getArticles() {
-        links.forEach(x -> {
-            Document document;
-            try {
-                document = Jsoup.connect(x).get();
-                System.out.println(x);
-                System.out.println(document.title());
-                for(int i = 0; i < cssClass.length; i++) {
-                    Elements articleLinks = document.getElementsByClass(cssClass[i]);
-                    for (Element article : articleLinks) {
-                    	System.out.println("Price: " + article.text());
-                    }
-                }
-            } catch (IOException e) {
-                System.err.println(e.getMessage());
-            }
-        });
-    }
+			Elements nameList = documentBody.getElementsByClass(this.domain.getItemNameCSS());
+			Elements priceList = documentBody.getElementsByClass(this.domain.getPriceClass());
 
-    public static void main(String[] args) {
-        Extractor bwc = new Extractor();
-        bwc.getPageLinks("https://www.flipkart.com/search?q=Redmi%20Note%207%20Pro%20%28Neptune%20Blue%2C%2064%20GB%29%20%20%284%20GB%20RAM%29&otracker=search&otracker1=search&marketplace=FLIPKART&as-show=on&as=off");
-        bwc.getPageLinks("https://www.amazon.in/s/ref=nb_sb_ss_sc_1_7?url=search-alias%3Daps&field-keywords=adidas+running+shoes+men");
-        bwc.getArticles();
-    }
+			int noOfItems = documentBody.getElementsByClass(this.domain.getSearchResultCSS()).size();
+			
+			Product product = new Product(domain);
+
+			for (int i = 0; i < noOfItems; i++) {
+				try {
+					Element itemName = nameList.get(i);
+					Element price = priceList.get(i);
+					double doublePrice = ProductUtils.getIntValue(price.text());
+					product.addPrice(doublePrice);
+					product.addProduce(itemName.text());
+				} catch (Exception e) {
+					continue;
+				}
+
+			}
+			document.clearAttributes();
+			return product;
+		} catch (IOException e) {
+			System.err.println(e.getMessage());
+		}
+		return null;
+	}
 }
