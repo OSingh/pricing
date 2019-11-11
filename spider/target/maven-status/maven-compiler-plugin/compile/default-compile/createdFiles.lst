@@ -1,0 +1,9 @@
+com\pricing\spider\core\ProductUtils.class
+com\pricing\spider\model\Product.class
+com\pricing\spider\core\CrawlController.class
+com\pricing\spider\core\CrawlerPool.class
+com\pricing\spider\core\Client.class
+com\pricing\spider\service\ReqController.class
+com\pricing\spider\core\Extractor.class
+com\pricing\spider\model\SearchResult.class
+com\pricing\spider\core\SourceDomainEnum.class
